@@ -20,6 +20,36 @@ FRAME_RATE_COUNT = 0
 FRAME_RATE_REFRESH = 1
 
 
+def cache_globals(fn):
+    """
+    Decorator to cache global lookups as constants.
+    """
+    from byteplay import Code, LOAD_CONST, LOAD_GLOBAL, LOAD_ATTR
+    code = Code.from_code(fn.func_code)
+
+    missing = object()
+    program_counter = 0
+    while program_counter < len(code.code):
+        opcode, arg = code.code[program_counter]
+
+        if opcode == LOAD_GLOBAL:
+            const = fn.func_globals.get(arg, missing)
+            if const is not missing:
+                code.code[program_counter] = (LOAD_CONST, const)
+
+        elif opcode == LOAD_ATTR:
+            prev_opcode, prev_arg = code.code[program_counter-1]
+            const = getattr(prev_arg, arg, missing)
+            if const is not missing:
+                code.code[program_counter-1:program_counter+1] = [(LOAD_CONST, const)]
+                program_counter -= 1
+
+        program_counter += 1
+
+    fn.func_code = code.to_code()
+    return fn
+
+
 class Scene(object):
     """
     The rendered scene.
@@ -31,6 +61,7 @@ class Scene(object):
         """
         # PyGame surface handle
         self.surface = surface
+        self.font = pygame.font.SysFont("Arial", 12)
 
         # Basic scene geometry
         self.width = width
@@ -73,6 +104,7 @@ class Scene(object):
         self.facets = facets
         self.edges = edges
 
+    @cache_globals
     def render_scene(self):
         """
         Render the scene.
@@ -82,6 +114,7 @@ class Scene(object):
         self.render_model()
         pygame.display.flip()
 
+    @cache_globals
     def render_background(self):
         """
         Render a checkered background.
@@ -110,10 +143,10 @@ class Scene(object):
         """
         Draw the FPS count on the top left of the screen.
         """
-        font = pygame.font.SysFont("Arial", 12)
-        text = font.render(str(FPS), True, (0, 0, 0))
+        text = self.font.render(str(FPS), True, (0, 0, 0))
         self.surface.blit(text, (8, 8))
 
+    @cache_globals
     def render_model(self):
         """
         Render the rotating cube.
@@ -197,7 +230,8 @@ class Scene(object):
                 self.render_triangle(
                     point1[0], point1[1], point2[0], point2[1], point3[0], point3[1])
 
-    def painters_algorithm(self, depths, facets):
+    @staticmethod
+    def painters_algorithm(depths, facets):
         """
         Given a list of vertex depths and facets, return
         a list of facets in reverse order of the average
@@ -206,13 +240,14 @@ class Scene(object):
         avg_depth = lambda facet: sum([depths[x] for x in facet[:3]]) / 3.0
         return sorted(facets, key=avg_depth, reverse=True)
 
+    @cache_globals
     def gouraud_shading(self, a, b, c, colour):
         """
         Calculate the colour of a facet by figuring out the angle
         at which the ambient light source hits it.
         """
-        vector_ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
-        vector_ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]
+        vector_ab = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+        vector_ac = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
 
         # Length normalize the vectors
         length_ab = math.sqrt(sum([x**2 for x in vector_ab]))
@@ -221,9 +256,9 @@ class Scene(object):
         vector_ac = [x/length_ac for x in vector_ac]
 
         # Compute the surface normal
-        surface_normal = [vector_ab[1] * vector_ac[2] - vector_ab[2] * vector_ac[1],
+        surface_normal = (vector_ab[1] * vector_ac[2] - vector_ab[2] * vector_ac[1],
                           vector_ab[2] * vector_ac[0] - vector_ab[0] * vector_ac[2],
-                          vector_ab[0] * vector_ac[1] - vector_ab[1] * vector_ac[0]]
+                          vector_ab[0] * vector_ac[1] - vector_ab[1] * vector_ac[0])
 
         # find the angle at which the light hits the surface
         angle = self.light_source[0] * surface_normal[0] + \
@@ -239,31 +274,35 @@ class Scene(object):
         angle = math.acos(angle) / math.pi
 
         # Change colour based on factor
-        shade = [math.floor(colour[0] * angle),
+        shade = (math.floor(colour[0] * angle),
                  math.floor(colour[1] * angle),
-                 math.floor(colour[2] * angle)]
+                 math.floor(colour[2] * angle))
 
         return shade
 
     # Functions for drawing graphics primitives.
+    @cache_globals
     def render_point(self, x, y):
         """
         Render a single pixel
         """
         pygame.draw.circle(self.surface, self.point_colour, (x, y), 2)
 
+    @cache_globals
     def render_line(self, x1, y1, x2, y2):
         """
         Render a line.
         """
         pygame.draw.line(self.surface, self.line_colour, (x1, y1), (x2, y2))
 
+    @cache_globals
     def render_triangle(self, x1, y1, x2, y2, x3, y3):
         """
         Render an unfilled triangle.
         """
         pygame.draw.polygon(self.surface, self.line_colour, ((x1, y1), (x2, y2), (x3, y3)), 1)
 
+    @cache_globals
     def render_fill_triangle(self, x1, y1, x2, y2, x3, y3, colour):
         """
         Render a filled triangle.
@@ -367,6 +406,7 @@ def colorize_facets(facets):
     return facets
 
 
+@cache_globals
 def main():
     """
     The main render loop.
